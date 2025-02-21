@@ -665,9 +665,8 @@ class MonthlyTIModel(MassBalanceModel):
         mb_annual = np.sum(prcpsol - self.monthly_melt_f * tmelt, axis=1)
         mb_annual = (mb_annual - self.bias) / SEC_IN_YEAR / self.rho
         if add_climate:
-            return (mb_annual, t.mean(axis=1), tmelt.sum(axis=1),
-                    prcp.sum(axis=1), prcpsol.sum(axis=1))
-        return mb_annual
+            return (t.mean(axis=1), prcp.sum(axis=1))
+            return mb_annual
 
 
 class ConstantMassBalance(MassBalanceModel):
