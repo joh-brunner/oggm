@@ -34,6 +34,7 @@ import warnings
 
 # External libs
 import numpy as np
+import pandas as pd
 from scipy.interpolate import griddata
 from scipy import optimize
 
@@ -739,7 +740,9 @@ def distribute_thickness_per_altitude(gdir, add_slope=True,
                                       topo_variable='topo_smoothed',
                                       smooth_radius=None,
                                       dis_from_border_exp=0.25,
-                                      varname_suffix=''):
+                                      varname_suffix='',
+                                      use_inversion = "True"
+                                      ):
     """Compute a thickness map by redistributing mass along altitudinal bands.
 
     This is a rather cosmetic task, not relevant for OGGM but for ITMIX or
@@ -782,14 +785,24 @@ def distribute_thickness_per_altitude(gdir, add_slope=True,
         else:
             slope_factor = 1.
 
+    thk = 0
+    vol = 0
     # Along the lines
-    cls = gdir.read_pickle('inversion_output')
+    if (use_inversion):
+        cls = gdir.read_pickle('inversion_output')[0]
+        thk = cls['thick']
+        vol = cls['volume']
+    else:
+        cls = pd.read_csv(gdir.get_filepath('elevation_band_flowline',filesuffix='_fixed_dx'))
+        thk = cls["thk"].to_numpy()
+        vol = (cls["thk"].to_numpy() * cls["area_m2"].to_numpy())
+    
     fls = gdir.read_pickle('inversion_flowlines')
     hs, ts, vs, xs, ys = [], [], [], [], []
     for cl, fl in zip(cls, fls):
-        hs = np.append(hs, fl.surface_h)
-        ts = np.append(ts, cl['thick'])
-        vs = np.append(vs, cl['volume'])
+        hs = np.append(hs, fl.surface_h)       
+        ts = np.append(ts, thk)
+        vs = np.append(vs, vol)
         try:
             x, y = fl.line.xy
         except AttributeError:
