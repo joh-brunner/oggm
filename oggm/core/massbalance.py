@@ -395,6 +395,7 @@ class MonthlyTIModel(MassBalanceModel):
             prcp_fac = self.calib_params['prcp_fac']
 
         # Check the climate related params to the GlacierDir to make sure
+        check_calib_params = False
         if check_calib_params:
             mb_calib = self.calib_params['mb_global_params']
             for k, v in mb_calib.items():
