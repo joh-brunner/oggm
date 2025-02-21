@@ -1389,9 +1389,15 @@ def gridded_attributes(gdir):
         glacier_mask = nc.variables['glacier_mask'][:]
 
     # Glacier exterior including nunataks
+    # Ensure glacier_mask is an integer or boolean array
+    glacier_mask = glacier_mask.astype(np.bool_)
     erode = binary_erosion(glacier_mask)
+
+    # Perform XOR operation
     glacier_ext = glacier_mask ^ erode
-    glacier_ext = np.where(glacier_mask == 1, glacier_ext, 0)
+
+    # Apply the condition
+    glacier_ext = np.where(glacier_mask, glacier_ext, 0)
 
     # Intersects between glaciers
     gdfi = gpd.GeoDataFrame(columns=['geometry'])
