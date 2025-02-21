@@ -35,19 +35,18 @@ def filter_nan_gaussian_conserving(arr, sigma=1):
 
     loss = np.zeros(arr.shape)
     loss[nan_msk] = 1
-    loss = ndimage.gaussian_filter(loss, sigma=sigma, mode='constant', cval=1)
+    loss = ndimage.gaussian_filter(loss, sigma=sigma, mode="constant", cval=1)
 
     gauss = arr.copy()
     gauss[nan_msk] = 0
-    gauss = ndimage.gaussian_filter(gauss, sigma=sigma, mode='constant', cval=0)
+    gauss = ndimage.gaussian_filter(gauss, sigma=sigma, mode="constant", cval=0)
     gauss[nan_msk] = np.nan
 
     return gauss + loss * arr
 
 
-@entity_task(log, writes=['gridded_data'])
-def add_smoothed_glacier_topo(gdir, outline_offset=-40,
-                              smooth_radius=1):
+@entity_task(log, writes=["gridded_data"])
+def add_smoothed_glacier_topo(gdir, outline_offset=-40, smooth_radius=1):
     """Smooth the glacier topography while ignoring surrounding slopes.
 
     It is different from the smoothing that occurs in the 'process_dem'
@@ -77,31 +76,34 @@ def add_smoothed_glacier_topo(gdir, outline_offset=-40,
         may not work well for other values than 1. To investigate.
     """
 
-    with xr.open_dataset(gdir.get_filepath('gridded_data')) as ds:
+    with xr.open_dataset(gdir.get_filepath("gridded_data")) as ds:
         raw_topo = xr.where(ds.glacier_mask == 1, ds.topo, np.nan)
         if outline_offset is not None:
             raw_topo += ds.glacier_ext * outline_offset
         raw_topo = raw_topo.data
 
     smooth_glacier = filter_nan_gaussian_conserving(raw_topo, smooth_radius)
-    with ncDataset(gdir.get_filepath('gridded_data'), 'a') as nc:
-        vn = 'glacier_topo_smoothed'
+    with ncDataset(gdir.get_filepath("gridded_data"), "a") as nc:
+        vn = "glacier_topo_smoothed"
         if vn in nc.variables:
             v = nc.variables[vn]
         else:
-            v = nc.createVariable(vn, 'f4', ('y', 'x',))
-        v.units = 'm'
-        v.long_name = 'Glacier topo smoothed'
-        v.description = ("DEM smoothed just on the glacier. The DEM outside "
-                         "the glacier doesn't impact the smoothing.")
+            v = nc.createVariable(
+                vn,
+                "f4",
+                (
+                    "y",
+                    "x",
+                ),
+            )
+        v.units = "m"
+        v.long_name = "Glacier topo smoothed"
+        v.description = "DEM smoothed just on the glacier. The DEM outside " "the glacier doesn't impact the smoothing."
         v[:] = smooth_glacier
 
 
-@entity_task(log, writes=['gridded_data'])
-def assign_points_to_band(gdir, topo_variable='glacier_topo_smoothed',
-                          ranking_variables=None,
-                          ranking_variables_weights=None,
-                          ):
+@entity_task(log, writes=["gridded_data"])
+def assign_points_to_band(gdir, topo_variable="topo_smoothed", elevation_weight=1.003, thickness_var="distributed_thickness"):
     """Assigns glacier grid points to flowline elevation bands and ranks them.
 
     Creates two variables in gridded_data.nc:
@@ -136,22 +138,21 @@ def assign_points_to_band(gdir, topo_variable='glacier_topo_smoothed',
         same order as ranking_variables! Default is [1].
     """
     # We need quite a few data from the gridded dataset
-    with xr.open_dataset(gdir.get_filepath('gridded_data')) as ds:
-        ds_grid = ds.load()
+    with xr.open_dataset(gdir.get_filepath("gridded_data")) as ds:
         topo_data = ds[topo_variable].data.copy()
         glacier_mask = ds.glacier_mask.data == 1
         topo_data_flat = topo_data[glacier_mask]
         band_index = topo_data * np.nan  # container
         per_band_rank = topo_data * np.nan  # container
-        weighting_per_pixel = topo_data * 0.  # container
+        distrib_thick = ds[thickness_var].data
 
     # For the flowline we need the model flowlines only
-    fls = gdir.read_pickle('model_flowlines')
-    assert len(fls) == 1, 'Only works with one flowline.'
+    fls = gdir.read_pickle("model_flowlines")
+    assert len(fls) == 1, "Only works with one flowline."
     fl = fls[0]
 
     # number of pixels per band along flowline
-    npix_per_band = fl.bin_area_m2 / (gdir.grid.dx ** 2)
+    npix_per_band = fl.bin_area_m2 / (gdir.grid.dx**2)
     nnpix_per_band_cumsum = np.around(npix_per_band[::-1].cumsum()[::-1])
 
     # check if their is a differenze between the flowline area and gridded area
@@ -161,8 +162,7 @@ def assign_points_to_band(gdir, topo_variable='glacier_topo_smoothed',
         # search for the largest differences between elevation bands and reduce
         # area for one pixel
         sorted_indices = np.argsort(np.abs(np.diff(nnpix_per_band_cumsum)))
-        npix_per_band[sorted_indices[-pix_diff:]] = \
-            npix_per_band[sorted_indices[-pix_diff:]] - 1
+        npix_per_band[sorted_indices[-pix_diff:]] = npix_per_band[sorted_indices[-pix_diff:]] - 1
         nnpix_per_band_cumsum = np.around(npix_per_band[::-1].cumsum()[::-1])
 
     rank_elev = mstats.rankdata(topo_data_flat)
@@ -188,7 +188,7 @@ def assign_points_to_band(gdir, topo_variable='glacier_topo_smoothed',
     # normalized variable will be inverted (0 becomes 1 and vice versa).
     if ranking_variables is None:
         # the default variables to use
-        ranking_variables = ['distributed_thickness']
+        ranking_variables = ["distributed_thickness"]
     if ranking_variables_weights is None:
         # the default weights to use
         ranking_variables_weights = [1]
@@ -199,8 +199,7 @@ def assign_points_to_band(gdir, topo_variable='glacier_topo_smoothed',
         data = np.where(glacier_mask, data, np.nan)
         return (data - np.nanmin(data)) / (np.nanmax(data) - np.nanmin(data))
 
-    for var, var_weight in zip(ranking_variables,
-                               ranking_variables_weights):
+    for var, var_weight in zip(ranking_variables, ranking_variables_weights):
         normalized_var = min_max_normalization(ds_grid[var].data)
         # for negative weights we invert the normalized variable
         # (smallest becomes largest and vice versa)
@@ -213,44 +212,44 @@ def assign_points_to_band(gdir, topo_variable='glacier_topo_smoothed',
         is_band = band_index == band_id
         per_band_rank[is_band] = mstats.rankdata(weighting_per_pixel[is_band])
 
-    with ncDataset(gdir.get_filepath('gridded_data'), 'a') as nc:
-        vn = 'band_index'
+    with ncDataset(gdir.get_filepath("gridded_data"), "a") as nc:
+        vn = "band_index"
         if vn in nc.variables:
             v = nc.variables[vn]
         else:
-            v = nc.createVariable(vn, 'f4', ('y', 'x',))
-        v.units = '-'
-        v.long_name = 'Points grouped by band along the flowline'
-        v.description = ('Points grouped by band along the flowline, '
-                         'ordered from top to bottom.')
+            v = nc.createVariable(
+                vn,
+                "f4",
+                (
+                    "y",
+                    "x",
+                ),
+            )
+        v.units = "-"
+        v.long_name = "Points grouped by band along the flowline"
+        v.description = "Points grouped by band along the flowline, " "ordered from top to bottom."
         v[:] = band_index
 
-        vn = 'rank_per_band'
+        vn = "rank_per_band"
         if vn in nc.variables:
             v = nc.variables[vn]
         else:
-            v = nc.createVariable(vn, 'f4', ('y', 'x',))
-        v.units = '-'
-        v.long_name = 'Points ranked by thickness and elevation within band'
-        v.description = ('Points ranked by thickness and elevation within each '
-                         'band.')
+            v = nc.createVariable(
+                vn,
+                "f4",
+                (
+                    "y",
+                    "x",
+                ),
+            )
+        v.units = "-"
+        v.long_name = "Points ranked by thickness and elevation within band"
+        v.description = "Points ranked by thickness and elevation within each " "band."
         v[:] = per_band_rank
 
 
-@entity_task(log, writes=['gridded_simulation'])
-def distribute_thickness_from_simulation(gdir,
-                                         input_filesuffix='',
-                                         concat_input_filesuffix=None,
-                                         output_filesuffix='',
-                                         fl_diag=None,
-                                         ys=None, ye=None,
-                                         smooth_radius=None,
-                                         add_monthly=False,
-                                         fl_thickness_threshold=0,
-                                         rolling_mean_smoothing=0,
-                                         only_allow_retreating=False,
-                                         debug_area_timeseries=False,
-                                         concat_ds=None):
+@entity_task(log, writes=["gridded_simulation"])
+def distribute_thickness_from_simulation(gdir, input_filesuffix="", concat_input_filesuffix=None, output_filesuffix="", fl_diag=None, ys=None, ye=None, smooth_radius=None, add_monthly=False, fl_thickness_threshold=0, rolling_mean_smoothing=0, only_allow_retreating=False, debug_area_timeseries=False, concat_ds=None):
     """Redistributes the simulated flowline area and volume back onto the 2D grid.
 
     For this to work, the glacier cannot advance beyond its initial area! It
@@ -335,25 +334,20 @@ def distribute_thickness_from_simulation(gdir,
     if fl_diag is not None:
         dg = fl_diag
     else:
-        fp = gdir.get_filepath('fl_diagnostics', filesuffix=input_filesuffix)
+        fp = gdir.get_filepath("fl_diagnostics", filesuffix=input_filesuffix)
         with xr.open_dataset(fp) as dg:
-            assert len(dg.flowlines.data) == 1, 'Only works with one flowline.'
-        with xr.open_dataset(fp, group=f'fl_0') as dg:
+            assert len(dg.flowlines.data) == 1, "Only works with one flowline."
+        with xr.open_dataset(fp, group=f"fl_0") as dg:
             if concat_input_filesuffix is not None:
-                fp0 = gdir.get_filepath('fl_diagnostics',
-                                        filesuffix=concat_input_filesuffix)
-                with xr.open_dataset(fp0, group=f'fl_0') as dg0:
+                fp0 = gdir.get_filepath("fl_diagnostics", filesuffix=concat_input_filesuffix)
+                with xr.open_dataset(fp0, group=f"fl_0") as dg0:
                     dg0 = dg0.load()
                     if dg0.time[-1] != dg.time[0]:
-                        raise InvalidWorkflowError(f'The two dataset times dont match: '
-                                                   f'{float(dg0.time[-1])} vs '
-                                                   f'{float(dg.time[0])}.')
+                        raise InvalidWorkflowError(f"The two dataset times dont match: " f"{float(dg0.time[-1])} vs " f"{float(dg.time[0])}.")
                     # Only include thickness, area, and volume to avoid errors
                     # with variables not present in both.
-                    vars_of_interest = ['thickness_m', 'area_m2', 'volume_m3']
-                    dg = xr.concat([dg0[vars_of_interest],
-                                    dg[vars_of_interest].isel(time=slice(1, None))],
-                                   dim='time')
+                    vars_of_interest = ["thickness_m", "area_m2", "volume_m3"]
+                    dg = xr.concat([dg0[vars_of_interest], dg[vars_of_interest].isel(time=slice(1, None))], dim="time")
             if ys is not None or ye is not None:
                 dg = dg.sel(time=slice(ys, ye))
             dg = dg.load()
@@ -363,22 +357,19 @@ def distribute_thickness_from_simulation(gdir,
 
     # save the original area evolution for the area plot
     if debug_area_timeseries:
-        out_df = dg['area_m2'].sum(dim='dis_along_flowline').to_dataframe(name='initial_area')
+        out_df = dg["area_m2"].sum(dim="dis_along_flowline").to_dataframe(name="initial_area")
 
     # applying the thickness threshold
-    dg = xr.where(dg['thickness_m'] < fl_thickness_threshold, 0, dg)
+    dg = xr.where(dg["thickness_m"] < fl_thickness_threshold, 0, dg)
 
     # applying the only retreating algorithm
     if only_allow_retreating:
         # stay in the loop as long as there is a glacier growing
-        for _ in range(len(dg['time'])):
+        for _ in range(len(dg["time"])):
             # get time_steps where thickness is increasing
-            mask = dg.thickness_m.diff(dim='time') > 0
+            mask = dg.thickness_m.diff(dim="time") > 0
             # add False for the first time step to keep the same dimensions
-            mask = xr.concat([xr.full_like(dg.thickness_m.isel(time=0),
-                                           False),
-                              mask],
-                             dim='time')
+            mask = xr.concat([xr.full_like(dg.thickness_m.isel(time=0), False), mask], dim="time")
             if mask.any():
                 # for each increasing time-step use the past time-step
                 dg = xr.where(mask, dg.shift(time=1), dg)
@@ -388,8 +379,7 @@ def distribute_thickness_from_simulation(gdir,
 
     # applying the rolling mean smoothing
     if rolling_mean_smoothing:
-        dg[['area_m2', 'volume_m3']] = dg[['area_m2', 'volume_m3']].rolling(
-            min_periods=1, time=rolling_mean_smoothing, center=True).mean()
+        dg[["area_m2", "volume_m3"]] = dg[["area_m2", "volume_m3"]].rolling(min_periods=1, time=rolling_mean_smoothing, center=True).mean()
 
     # monthly interpolation for higher temporal resolution
     if add_monthly:
@@ -397,22 +387,20 @@ def distribute_thickness_from_simulation(gdir,
         monthly_time = utils.monthly_timeseries(dg.time[0], dg.time[-1])
         yrs, months = utils.floatyear_to_date(monthly_time)
         # interpolate and add years and months as new coords
-        dg = dg[['area_m2', 'volume_m3']].interp(time=monthly_time,
-                                                 method='linear')
+        dg = dg[["area_m2", "volume_m3"]].interp(time=monthly_time, method="linear")
     else:
         yrs, months = utils.floatyear_to_date(dg.time)
 
     if debug_area_timeseries:
-        out_df['smoothed_area'] = dg['area_m2'].sum(dim='dis_along_flowline').to_series()
+        out_df["smoothed_area"] = dg["area_m2"].sum(dim="dis_along_flowline").to_series()
 
-    with xr.open_dataset(gdir.get_filepath('gridded_data')) as ds:
+    with xr.open_dataset(gdir.get_filepath("gridded_data")) as ds:
         band_index_mask = ds.band_index.data
         rank_per_band = ds.rank_per_band.data
         glacier_mask = ds.glacier_mask.data == 1
         orig_distrib_thick = ds.distributed_thickness.data
 
-    band_ids, counts = np.unique(np.sort(band_index_mask[glacier_mask]),
-                                 return_counts=True)
+    band_ids, counts = np.unique(np.sort(band_index_mask[glacier_mask]), return_counts=True)
 
     dx2 = gdir.grid.dx**2
     out_thick = np.zeros((len(dg.time), *glacier_mask.shape))
@@ -428,8 +416,7 @@ def distribute_thickness_from_simulation(gdir,
             if ~np.isclose(band_area, 0):
                 # We have some ice left
                 pix_cov = band_area / dx2
-                mask = (band_index_mask == band_id) & \
-                       (rank_per_band >= (npix - pix_cov))
+                mask = (band_index_mask == band_id) & (rank_per_band >= (npix - pix_cov))
                 vol_orig = np.where(mask, orig_distrib_thick, 0).sum() * dx2
                 area_dis = mask.sum() * dx2
                 thick_cor = (vol_orig - band_volume) / area_dis
@@ -449,7 +436,7 @@ def distribute_thickness_from_simulation(gdir,
             dx = gdir.grid.dx
             if smooth_radius != 0:
                 if smooth_radius is None:
-                    smooth_radius = np.rint(cfg.PARAMS['smooth_window'] / dx)
+                    smooth_radius = np.rint(cfg.PARAMS["smooth_window"] / dx)
                 new_thick = gaussian_blur(new_thick, int(smooth_radius))
 
             new_thick[~this_glacier_mask] = np.nan
@@ -460,25 +447,30 @@ def distribute_thickness_from_simulation(gdir,
 
         out_thick[i, :] = new_thick
 
-    with xr.open_dataset(gdir.get_filepath('gridded_data')) as ds:
-        ds['bedrock'] = ds['topo'] - ds['distributed_thickness'].fillna(0)
-        ds = ds[['glacier_mask', 'topo', 'bedrock']].load()
+    with xr.open_dataset(gdir.get_filepath("gridded_data")) as ds:
+        ds["bedrock"] = ds["topo_smoothed"] - ds["distributed_thickness"].fillna(0)
+        ds = ds[["glacier_mask", "topo_smoothed", "bedrock"]].load()
 
-    ds.coords['time'] = dg['time']
+    ds.coords["time"] = dg["time"]
 
     vn = "simulated_thickness"
-    ds[vn] = (('time', 'y', 'x',), out_thick)
-    ds.coords['calendar_year'] = ('time', yrs)
-    ds.coords['calendar_month'] = ('time', months)
+    ds[vn] = (
+        (
+            "time",
+            "y",
+            "x",
+        ),
+        out_thick,
+    )
+    ds.coords["calendar_year"] = ("time", yrs)
+    ds.coords["calendar_month"] = ("time", months)
 
     if concat_ds is not None:
         if concat_ds.time[-1] != ds.time[0]:
-            raise InvalidWorkflowError(f'The two dataset times dont match: '
-                                       f'{concat_ds.time[-1]} vs {ds.time[0]}.')
-        ds = xr.concat([concat_ds, ds.isel(time=(1, None))], dim='time')
+            raise InvalidWorkflowError(f"The two dataset times dont match: " f"{concat_ds.time[-1]} vs {ds.time[0]}.")
+        ds = xr.concat([concat_ds, ds.isel(time=(1, None))], dim="time")
 
-    ds.to_netcdf(gdir.get_filepath('gridded_simulation',
-                                   filesuffix=output_filesuffix))
+    ds.to_netcdf(gdir.get_filepath("gridded_simulation", filesuffix=output_filesuffix))
 
     if debug_area_timeseries:
         return ds, out_df
@@ -487,20 +479,7 @@ def distribute_thickness_from_simulation(gdir,
 
 
 @global_task(log)
-def merge_simulated_thickness(gdirs,
-                              output_folder=None,
-                              output_filename=None,
-                              simulation_filesuffix='',
-                              years_to_merge=None,
-                              keep_dem_file=False,
-                              interp='nearest',
-                              preserve_totals=True,
-                              smooth_radius=None,
-                              use_glacier_mask=True,
-                              add_topography=True,
-                              use_multiprocessing=False,
-                              save_as_multiple_files=True,
-                              reset=False):
+def merge_simulated_thickness(gdirs, output_folder=None, output_filename=None, simulation_filesuffix="", years_to_merge=None, keep_dem_file=False, interp="nearest", preserve_totals=True, smooth_radius=None, use_glacier_mask=True, add_topography=True, use_multiprocessing=False, save_as_multiple_files=True, reset=False):
     """
     This function is a wrapper for workflow.merge_gridded_data when one wants
     to merge the distributed thickness after a simulation. It adds all
@@ -541,16 +520,16 @@ def merge_simulated_thickness(gdirs,
     reset
     """
     if output_filename is None:
-        output_filename = f'gridded_simulation_merged{simulation_filesuffix}'
+        output_filename = f"gridded_simulation_merged{simulation_filesuffix}"
 
     if output_folder is None:
-        output_folder = cfg.PATHS['working_dir']
+        output_folder = cfg.PATHS["working_dir"]
 
     # function for calculating the bedrock topography
     def _calc_bedrock_topo(fp):
         with xr.open_dataset(fp) as ds:
             ds = ds.load()
-        ds['bedrock'] = (ds['topo'] - ds['distributed_thickness'].fillna(0))
+        ds["bedrock"] = ds["topo"] - ds["distributed_thickness"].fillna(0)
         ds.to_netcdf(fp)
 
     if save_as_multiple_files:
@@ -559,12 +538,13 @@ def merge_simulated_thickness(gdirs,
             gdirs,
             output_folder=output_folder,
             output_filename=f"{output_filename}_topo_data",
-            input_file='gridded_data',
-            input_filesuffix='',
-            included_variables=['glacier_ext',
-                                'glacier_mask',
-                                'distributed_thickness',
-                                ],
+            input_file="gridded_data",
+            input_filesuffix="",
+            included_variables=[
+                "glacier_ext",
+                "glacier_mask",
+                "distributed_thickness",
+            ],
             preserve_totals=preserve_totals,
             smooth_radius=smooth_radius,
             use_glacier_mask=use_glacier_mask,
@@ -573,21 +553,18 @@ def merge_simulated_thickness(gdirs,
             interp=interp,
             use_multiprocessing=use_multiprocessing,
             return_dataset=False,
-            reset=reset)
+            reset=reset,
+        )
 
         # recalculate bed topography after reprojection, if topo was added
         if add_topography:
-            fp = os.path.join(output_folder,
-                              f"{output_filename}_topo_data.nc")
+            fp = os.path.join(output_folder, f"{output_filename}_topo_data.nc")
             _calc_bedrock_topo(fp)
 
         # then the simulated thickness files
         if years_to_merge is None:
             # open first file to get all available timesteps
-            with xr.open_dataset(
-                    gdirs[0].get_filepath('gridded_simulation',
-                                          filesuffix=simulation_filesuffix)
-            ) as ds:
+            with xr.open_dataset(gdirs[0].get_filepath("gridded_simulation", filesuffix=simulation_filesuffix)) as ds:
                 years_to_merge = ds.time
 
         for timestep in years_to_merge:
@@ -598,47 +575,31 @@ def merge_simulated_thickness(gdirs,
                 year = int(timestep.calendar_year)
                 month = int(timestep.calendar_month)
             else:
-                raise NotImplementedError('Wrong type for years_to_merge! '
-                                          'Should be list of int or '
-                                          'xarray.DataArray for monthly '
-                                          'timesteps.')
+                raise NotImplementedError("Wrong type for years_to_merge! " "Should be list of int or " "xarray.DataArray for monthly " "timesteps.")
 
-            workflow.merge_gridded_data(
-                gdirs,
-                output_folder=output_folder,
-                output_filename=f"{output_filename}_{year}_{month:02d}",
-                input_file='gridded_simulation',
-                input_filesuffix=simulation_filesuffix,
-                included_variables=[('simulated_thickness',
-                                     {'time': [timestep]})],
-                preserve_totals=preserve_totals,
-                smooth_radius=smooth_radius,
-                use_glacier_mask=use_glacier_mask,
-                add_topography=False,
-                keep_dem_file=False,
-                interp=interp,
-                use_multiprocessing=use_multiprocessing,
-                return_dataset=False,
-                reset=reset)
+            workflow.merge_gridded_data(gdirs, output_folder=output_folder, output_filename=f"{output_filename}_{year}_{month:02d}", input_file="gridded_simulation", input_filesuffix=simulation_filesuffix, included_variables=[("simulated_thickness", {"time": [timestep]})], preserve_totals=preserve_totals, smooth_radius=smooth_radius, use_glacier_mask=use_glacier_mask, add_topography=False, keep_dem_file=False, interp=interp, use_multiprocessing=use_multiprocessing, return_dataset=False, reset=reset)
 
     else:
         # here we save everything in one file
         if years_to_merge is None:
             selected_time = None
         else:
-            selected_time = {'time': years_to_merge}
+            selected_time = {"time": years_to_merge}
 
         workflow.merge_gridded_data(
             gdirs,
             output_folder=output_folder,
             output_filename=output_filename,
-            input_file=['gridded_data', 'gridded_simulation'],
-            input_filesuffix=['', simulation_filesuffix],
-            included_variables=[['glacier_ext',
-                                 'glacier_mask',
-                                 'distributed_thickness',
-                                 ],
-                                [('simulated_thickness', selected_time)]],
+            input_file=["gridded_data", "gridded_simulation"],
+            input_filesuffix=["", simulation_filesuffix],
+            included_variables=[
+                [
+                    "glacier_ext",
+                    "glacier_mask",
+                    "distributed_thickness",
+                ],
+                [("simulated_thickness", selected_time)],
+            ],
             preserve_totals=preserve_totals,
             smooth_radius=smooth_radius,
             use_glacier_mask=use_glacier_mask,
@@ -647,9 +608,10 @@ def merge_simulated_thickness(gdirs,
             interp=interp,
             use_multiprocessing=use_multiprocessing,
             return_dataset=False,
-            reset=reset)
+            reset=reset,
+        )
 
         # recalculate bed topography after reprojection, if topo was added
         if add_topography:
-            fp = os.path.join(output_folder, f'{output_filename}.nc')
+            fp = os.path.join(output_folder, f"{output_filename}.nc")
             _calc_bedrock_topo(fp)
