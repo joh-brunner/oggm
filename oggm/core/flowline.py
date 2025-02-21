@@ -3025,9 +3025,13 @@ def init_present_time_glacier(gdir, filesuffix='',
         data here to create a flowline for a dynamic model run
     """
 
-    # Some vars
-    invs = gdir.read_pickle('inversion_output')
 
+    # Some vars
+    if not use_binned_thickness_data:
+        invs = gdir.read_pickle('inversion_output')
+    else:
+        invs = [{"is_last" : True}]
+        
     map_dx = gdir.grid.dx
     def_lambda = cfg.PARAMS['trapezoid_lambdas']
     cls = gdir.read_pickle('inversion_flowlines')
