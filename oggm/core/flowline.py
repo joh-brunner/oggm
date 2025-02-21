@@ -824,6 +824,42 @@ class FlowlineModel(object):
                                                         fls=fls)
 
         return self._mb_current_out[fl_id]
+    
+    def get_climate_info(self, heights, year=None, fl_id=None, fls=None):
+        """ Call this function for adding climate information to diagnosis
+        """
+
+        # Do we even have to optimise?
+        if self.mb_elev_feedback == 'always':
+            return self._mb_call(heights, year=year, fl_id=fl_id, fls=fls)
+
+        # Ok, user asked for it
+        if fl_id is None:
+            raise ValueError('Need fls_id')
+
+        if self.mb_elev_feedback == 'never':
+            # The very first call we take the heights
+            if fl_id not in self._mb_current_heights:
+                # We need to reset just this tributary
+                self._mb_current_heights[fl_id] = heights
+            # All calls we replace
+            heights = self._mb_current_heights[fl_id]
+
+        date = utils.floatyear_to_date(year)
+        if self.mb_elev_feedback in ['annual', 'never']:
+            # ignore month changes
+            date = (date[0], date[0])
+
+
+        self._mb_current_date = date
+        self._mb_current_out = dict()
+        self._mb_current_out[fl_id] = self._mb_call(heights,
+                                                    year=year,
+                                                    fl_id=fl_id,
+                                                    fls=fls,
+                                                    add_climate = True)
+
+        return self._mb_current_out[fl_id]
 
     def to_geometry_netcdf(self, path):
         """Creates a netcdf group file storing the state of the model."""
@@ -1244,6 +1280,11 @@ class FlowlineModel(object):
                     ds['climatic_mb_myr'].attrs['description'] = desc
                     ds['climatic_mb_myr'].attrs['unit'] = 'm yr-1'
 
+                    ds['temp'] = (('time', 'dis_along_flowline'),
+                                             width * np.nan)
+                    ds['prcp'] = (('time', 'dis_along_flowline'),
+                                             width * np.nan)
+
                     # needed for the calculation of mb at start of period
                     surface_h_previous = {}
                     for fl_id, fl in enumerate(self.fls):
@@ -1332,7 +1373,15 @@ class FlowlineModel(object):
                             ds['climatic_mb_myr'].data[j, :] = np.where(
                                 dhdt_zero,
                                 0.,
-                                val * cfg.SEC_IN_YEAR)
+                                val*cfg.SEC_IN_YEAR)
+                            temp, prcp = self.get_climate_info(surface_h_previous[fl_id],
+                                              self.yr - 1,
+                                              fl_id=fl_id)
+                            
+                            ds['temp'].data[j, :] = temp
+                            ds['prcp'].data[j, :] = prcp
+
+
                             surface_h_previous[fl_id] = fl.surface_h
                         if 'flux_divergence' in ovars_fl and (yr > self.y0):
                             # calculated after the formula dhdt = mb + flux_div
@@ -1407,6 +1456,7 @@ class FlowlineModel(object):
                 ds.attrs['glen_a'] = self.glen_a
                 ds.attrs['fs'] = self.fs
                 # Add MB model attributes
+                print("ADDING MB ATTRIBUTES")
                 ds.attrs['mb_model_class'] = self.mb_model.__class__.__name__
                 for k, v in self.mb_model.__dict__.items():
                     if np.isscalar(v) and not k.startswith('_'):
