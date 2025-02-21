@@ -1824,7 +1824,7 @@ class FluxBasedModel(FlowlineModel):
             N = self.glen_n
             rhogh = (self.rho*G*slope_stag)**N
             u_stag[:] = (thick_stag**(N+1)) * self._fd * rhogh * sf_stag**N + \
-                        (thick_stag**(N-1)) * self.fs * rhogh
+                        (thick_stag**(N)) * self.fs * rhogh
 
             # Staggered section
             section_stag[1:-1] = (section[0:-1] + section[1:]) / 2.
