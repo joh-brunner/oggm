@@ -741,7 +741,8 @@ def distribute_thickness_per_altitude(gdir, add_slope=True,
                                       smooth_radius=None,
                                       dis_from_border_exp=0.25,
                                       varname_suffix='',
-                                      use_inversion = "True"
+                                      use_inversion = "True",
+                                      thk_var = "thk"
                                       ):
     """Compute a thickness map by redistributing mass along altitudinal bands.
 
@@ -794,8 +795,8 @@ def distribute_thickness_per_altitude(gdir, add_slope=True,
         vol = cls['volume']
     else:
         cls = pd.read_csv(gdir.get_filepath('elevation_band_flowline',filesuffix='_fixed_dx'))
-        thk = cls["thk"].to_numpy()
-        vol = (cls["thk"].to_numpy() * cls["area_m2"].to_numpy())
+        thk = cls[thk_var].to_numpy()
+        vol = (cls[thk_var].to_numpy() * cls["area_m2"].to_numpy())
     
     fls = gdir.read_pickle('inversion_flowlines')
     hs, ts, vs, xs, ys = [], [], [], [], []
