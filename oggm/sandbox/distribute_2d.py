@@ -186,6 +186,8 @@ def assign_points_to_band(gdir, topo_variable="topo_smoothed", elevation_weight=
     # can be defined by the user. All variables are normalized (between 0 and 1)
     # and multiplied by a weight and summed up. If the weight is negative the
     # normalized variable will be inverted (0 becomes 1 and vice versa).
+    ranking_variables=None
+    ranking_variables_weights = None
     if ranking_variables is None:
         # the default variables to use
         ranking_variables = ["distributed_thickness"]
@@ -199,8 +201,9 @@ def assign_points_to_band(gdir, topo_variable="topo_smoothed", elevation_weight=
         data = np.where(glacier_mask, data, np.nan)
         return (data - np.nanmin(data)) / (np.nanmax(data) - np.nanmin(data))
 
+    weighting_per_pixel = 0
     for var, var_weight in zip(ranking_variables, ranking_variables_weights):
-        normalized_var = min_max_normalization(ds_grid[var].data)
+        normalized_var = min_max_normalization(ds[var].data)
         # for negative weights we invert the normalized variable
         # (smallest becomes largest and vice versa)
         if var_weight < 0:
@@ -212,40 +215,34 @@ def assign_points_to_band(gdir, topo_variable="topo_smoothed", elevation_weight=
         is_band = band_index == band_id
         per_band_rank[is_band] = mstats.rankdata(weighting_per_pixel[is_band])
 
-    with ncDataset(gdir.get_filepath("gridded_data"), "a") as nc:
-        vn = "band_index"
-        if vn in nc.variables:
-            v = nc.variables[vn]
-        else:
-            v = nc.createVariable(
-                vn,
-                "f4",
-                (
-                    "y",
-                    "x",
-                ),
-            )
-        v.units = "-"
-        v.long_name = "Points grouped by band along the flowline"
-        v.description = "Points grouped by band along the flowline, " "ordered from top to bottom."
-        v[:] = band_index
+    # Define your data arrays (ensure they match the dimensions of 'y' and 'x')
+    band_index_data = xr.DataArray(
+        band_index,
+        dims=("y", "x"),
+        attrs={
+            "units": "-",
+            "long_name": "Points grouped by band along the flowline",
+            "description": "Points grouped by band along the flowline, ordered from top to bottom.",
+        },
+    )
 
-        vn = "rank_per_band"
-        if vn in nc.variables:
-            v = nc.variables[vn]
-        else:
-            v = nc.createVariable(
-                vn,
-                "f4",
-                (
-                    "y",
-                    "x",
-                ),
-            )
-        v.units = "-"
-        v.long_name = "Points ranked by thickness and elevation within band"
-        v.description = "Points ranked by thickness and elevation within each " "band."
-        v[:] = per_band_rank
+    per_band_rank_data = xr.DataArray(
+        per_band_rank,
+        dims=("y", "x"),
+        attrs={
+            "units": "-",
+            "long_name": "Points ranked by thickness and elevation within band",
+            "description": "Points ranked by thickness and elevation within each band.",
+        },
+    )
+
+    # Assign the DataArrays to the dataset
+    ds["band_index"] = band_index_data
+    ds["rank_per_band"] = per_band_rank_data
+
+    # Save the updated dataset back to a NetCDF file
+    # ds.to_netcdf(gdir.get_filepath("gridded_data"), mode='w')
+    ds.to_netcdf(gdir.dir + "/distributed.nc", mode="w")
 
 
 @entity_task(log, writes=["gridded_simulation"])
@@ -394,7 +391,7 @@ def distribute_thickness_from_simulation(gdir, input_filesuffix="", concat_input
     if debug_area_timeseries:
         out_df["smoothed_area"] = dg["area_m2"].sum(dim="dis_along_flowline").to_series()
 
-    with xr.open_dataset(gdir.get_filepath("gridded_data")) as ds:
+    with xr.open_dataset(gdir.dir + "/distributed.nc") as ds:
         band_index_mask = ds.band_index.data
         rank_per_band = ds.rank_per_band.data
         glacier_mask = ds.glacier_mask.data == 1
@@ -447,7 +444,7 @@ def distribute_thickness_from_simulation(gdir, input_filesuffix="", concat_input
 
         out_thick[i, :] = new_thick
 
-    with xr.open_dataset(gdir.get_filepath("gridded_data")) as ds:
+    with xr.open_dataset(gdir.dir + "/distributed.nc") as ds:
         ds["bedrock"] = ds["topo_smoothed"] - ds["distributed_thickness"].fillna(0)
         ds = ds[["glacier_mask", "topo_smoothed", "bedrock"]].load()
 
